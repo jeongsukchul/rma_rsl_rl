@@ -61,12 +61,18 @@ class PPO_sym(PPO):
                     self.mirror_obs = torch.eye(num_obvs).reshape(1, num_obvs, num_obvs).repeat(minibatchsize, 1, 1).to(device=self.device)
                     self.mirror_act = torch.eye(num_acts).reshape(1, num_acts, num_acts).repeat(minibatchsize, 1, 1).to(device=self.device)
                     for _, (i,j) in self.mirror_dict.items():
-                        self.mirror_act[:, i, j] = -1
-                        self.mirror_act[:, j, i] = -1
                         self.mirror_act[:, i, i] = 0
                         self.mirror_act[:, j, j] = 0
+                        self.mirror_act[:, i, j] = -1
+                        self.mirror_act[:, j, i] = -1
                     for i in range(int(self.no_mirror / 3)):
-                        self.mirror_obs[:, 3*i+1, 3*i+1] *= -1
+                        if (i == 1): # base angular velocity terms -> *-1 to x and z ang vels
+                            self.mirror_obs[:, 3*i, 3*i] *= -1
+                            self.mirror_obs[:, 3*i+2, 3*i+2] *= -1 
+                        if (i == 3):
+                            self.mirror_obs[:, 3*i+2, 3*i+2] *= -1 # last element of command is yaw
+                        else:
+                            self.mirror_obs[:, 3*i+1, 3*i+1] *= -1
                     for i in range(int((num_obvs - self.no_mirror) / num_acts)):
                         self.mirror_obs[:, self.no_mirror + i*num_acts:self.no_mirror + (i+1)*num_acts, self.no_mirror + i*num_acts:self.no_mirror + (i+1)*num_acts] = self.mirror_act
                     self.mirror_init = False
