@@ -77,7 +77,7 @@ class OnPolicyRunnerSym(OnPolicyRunner):
         self.tot_time = 0
         self.current_learning_iteration = 0
         _, _ = self.env.reset() # reset means a single step after zero initialization
-        print("Sim version of runner loaded")
+        print("Sym version of runner loaded")
         
     def learn(self, num_learning_iterations, init_at_random_ep_len=False):
         # initialize writer
