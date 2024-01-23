@@ -9,9 +9,10 @@ from rsl_rl.algorithms import PPO
 # https://arxiv.org/pdf/1801.08093.pdf
 
 class PPO_sym(PPO):
-    def __init__(self, actor_critic, mirror, no_mirror = 12, mirror_weight = 4, num_learning_epochs=1, num_mini_batches=1, clip_param=0.2, gamma=0.998, lam=0.95, value_loss_coef=1, entropy_coef=0, learning_rate=0.001, max_grad_norm=1, use_clipped_value_loss=True, schedule="fixed", desired_kl=0.01, device='cpu'):
+    def __init__(self, actor_critic, mirror, mirror_neg = {}, no_mirror = 12, mirror_weight = 4, num_learning_epochs=1, num_mini_batches=1, clip_param=0.2, gamma=0.998, lam=0.95, value_loss_coef=1, entropy_coef=0, learning_rate=0.001, max_grad_norm=1, use_clipped_value_loss=True, schedule="fixed", desired_kl=0.01, device='cpu'):
         super().__init__(actor_critic, num_learning_epochs, num_mini_batches, clip_param, gamma, lam, value_loss_coef, entropy_coef, learning_rate, max_grad_norm, use_clipped_value_loss, schedule, desired_kl, device)
         self.mirror_dict = mirror
+        self.mirror_neg_dict = mirror_neg
         self.no_mirror = no_mirror
         self.mirror_weight = mirror_weight
         self.mirror_init = True
@@ -61,6 +62,11 @@ class PPO_sym(PPO):
                     self.mirror_obs = torch.eye(num_obvs).reshape(1, num_obvs, num_obvs).repeat(minibatchsize, 1, 1).to(device=self.device)
                     self.mirror_act = torch.eye(num_acts).reshape(1, num_acts, num_acts).repeat(minibatchsize, 1, 1).to(device=self.device)
                     for _, (i,j) in self.mirror_dict.items():
+                        self.mirror_act[:, i, i] = 0
+                        self.mirror_act[:, j, j] = 0
+                        self.mirror_act[:, i, j] = 1
+                        self.mirror_act[:, j, i] = 1
+                    for _, (i, j) in self.mirror_neg_dict.items():
                         self.mirror_act[:, i, i] = 0
                         self.mirror_act[:, j, j] = 0
                         self.mirror_act[:, i, j] = -1
