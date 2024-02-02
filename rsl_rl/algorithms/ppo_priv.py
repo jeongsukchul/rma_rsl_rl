@@ -11,8 +11,9 @@ from rsl_rl.algorithms import PPO
 class PPO_priv(PPO):
     actor_critic: ActorCriticLatent
     def __init__(self, 
-                 actor_critic, 
-                 mirror, mirror_neg = {},
+                 actor_critic_latent, 
+                 mirror, 
+                 mirror_neg = {}, 
                  no_mirror = 12, 
                  mirror_weight = 4, 
                  num_learning_epochs=1, 
@@ -28,7 +29,7 @@ class PPO_priv(PPO):
                  schedule="fixed", 
                  desired_kl=0.01, 
                  device='cpu'):
-        super().__init__(actor_critic, num_learning_epochs, num_mini_batches, clip_param, gamma, lam, value_loss_coef, entropy_coef, learning_rate, max_grad_norm, use_clipped_value_loss, schedule, desired_kl, device)
+        super().__init__(actor_critic_latent, num_learning_epochs, num_mini_batches, clip_param, gamma, lam, value_loss_coef, entropy_coef, learning_rate, max_grad_norm, use_clipped_value_loss, schedule, desired_kl, device)
         self.mirror_dict = mirror
         self.mirror_neg_dict = mirror_neg
         self.no_mirror = no_mirror
@@ -36,25 +37,41 @@ class PPO_priv(PPO):
         self.mirror_init = True
         print("Sym version of PPO loaded")
         print("Mirror weight: ", mirror_weight)
-                
+
+    def init_storage(self, num_envs, num_transitions_per_env, obs_envs_shape, action_shape):
+        self.storage = RolloutStorage(num_envs, num_transitions_per_env, obs_envs_shape, action_shape, self.device)      
+
+    def act(self, total_obs):
+        if self.actor_critic.is_recurrent:
+            self.transition.hidden_states = self.actor_critic.get_hidden_states()
+        # Compute the actions and values
+        self.transition.actions = self.actor_critic.act(total_obs).detach()
+        self.transition.values = self.actor_critic.evaluate(total_obs).detach()
+        self.transition.actions_log_prob = self.actor_critic.get_actions_log_prob(self.transition.actions).detach()
+        self.transition.action_mean = self.actor_critic.action_mean.detach()
+        self.transition.action_sigma = self.actor_critic.action_std.detach()
+        # need to record obs and critic_obs before env.step()
+        self.transition.obs_envs = total_obs
+        return self.transition.actions
+          
     def update(self):
         mean_value_loss = 0
         mean_surrogate_loss = 0
         mean_mirror_loss = 0
-        if self.actor_critic.is_recurrent:
+    
+        if self.actor_critic_latent.is_recurrent:
             generator = self.storage.reccurent_mini_batch_generator(self.num_mini_batches, self.num_learning_epochs)
         else:
             generator = self.storage.mini_batch_generator(self.num_mini_batches, self.num_learning_epochs)
-        for obs_batch, critic_obs_batch, actions_batch, target_values_batch, advantages_batch, returns_batch, old_actions_log_prob_batch, \
+        for total_obs_batch, actions_batch, target_values_batch, advantages_batch, returns_batch, old_actions_log_prob_batch, \
             old_mu_batch, old_sigma_batch, hid_states_batch, masks_batch in generator:
             # The shape of an obs batch is : (minibatchsize, obs_shape)
-
-                self.actor_critic.act(obs_batch, masks=masks_batch, hidden_states=hid_states_batch[0])
-                actions_log_prob_batch = self.actor_critic.get_actions_log_prob(actions_batch)
-                value_batch = self.actor_critic.evaluate(critic_obs_batch, masks=masks_batch, hidden_states=hid_states_batch[1])
-                mu_batch = self.actor_critic.action_mean
-                sigma_batch = self.actor_critic.action_std
-                entropy_batch = self.actor_critic.entropy
+                self.actor_critic_latent.act(total_obs_batch, masks=masks_batch, hidden_states=hid_states_batch[0])
+                actions_log_prob_batch = self.actor_critic_latent.get_actions_log_prob(actions_batch)
+                value_batch = self.actor_critic_latent.evaluate(total_obs_batch, masks=masks_batch, hidden_states=hid_states_batch[1])
+                mu_batch = self.actor_critic_latent.action_mean
+                sigma_batch = self.actor_critic_latent.action_std
+                entropy_batch = self.actor_critic_latent.entropy
 
                 # KL
                 if self.desired_kl != None and self.schedule == 'adaptive':
@@ -74,8 +91,8 @@ class PPO_priv(PPO):
                 # Mirror loss
                 # use mirror dict as mirror
                 if self.mirror_init:
-                    num_obvs = obs_batch.shape[1] # 75
-                    minibatchsize = obs_batch.shape[0]
+                    num_obvs = self.storage.obs_shape # how much?
+                    minibatchsize = total_obs_batch.shape[0]
                     num_acts = actions_batch.shape[1] # 21
                     self.mirror_obs = torch.eye(num_obvs).reshape(1, num_obvs, num_obvs).repeat(minibatchsize, 1, 1).to(device=self.device)
                     self.mirror_act = torch.eye(num_acts).reshape(1, num_acts, num_acts).repeat(minibatchsize, 1, 1).to(device=self.device)
@@ -101,7 +118,7 @@ class PPO_priv(PPO):
                     for i in range(int((num_obvs - self.no_mirror) / num_acts)):
                         self.mirror_obs[:, self.no_mirror + i*num_acts:self.no_mirror + (i+1)*num_acts, self.no_mirror + i*num_acts:self.no_mirror + (i+1)*num_acts] = self.mirror_act
                     self.mirror_init = False
-                mirror_loss = torch.mean(torch.square(self.actor_critic.actor(obs_batch) - (self.mirror_act @ self.actor_critic.actor((self.mirror_obs @ obs_batch.unsqueeze(2)).squeeze()).unsqueeze(2)).squeeze())) 
+                mirror_loss = torch.mean(torch.square(self.actor_critic_latent.actor(obs_batch) - (self.mirror_act @ self.actor_critic_latent.actor((self.mirror_obs @ obs_batch.unsqueeze(2)).squeeze()).unsqueeze(2)).squeeze())) 
             
                 # Surrogate loss
                 ratio = torch.exp(actions_log_prob_batch - torch.squeeze(old_actions_log_prob_batch))
@@ -125,7 +142,7 @@ class PPO_priv(PPO):
                 # Gradient step
                 self.optimizer.zero_grad()
                 loss.backward()
-                nn.utils.clip_grad_norm_(self.actor_critic.parameters(), self.max_grad_norm)
+                nn.utils.clip_grad_norm_(self.actor_critic_latent.parameters(), self.max_grad_norm)
                 self.optimizer.step()
 
                 mean_value_loss += value_loss.item()

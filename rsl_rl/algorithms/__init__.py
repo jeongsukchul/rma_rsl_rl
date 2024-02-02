@@ -30,3 +30,5 @@
 
 from .ppo import PPO
 from .ppo_sym import PPO_sym
+from .ppo_priv import PPO_priv
+from .dagger import DaggerAgent, DaggerExpert, DaggerTrainer

@@ -30,3 +30,4 @@
 
 from .on_policy_runner import OnPolicyRunner
 from .on_policy_runner_sym import OnPolicyRunnerSym
+from .on_policy_runner_rma import OnPolicyRunnerRMA
