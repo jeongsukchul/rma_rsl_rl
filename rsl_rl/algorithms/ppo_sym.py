@@ -8,7 +8,7 @@ from rsl_rl.algorithms import PPO
 # This algorithm includes the mirror loss
 # https://arxiv.org/pdf/1801.08093.pdf
 
-class PPO_priv(PPO):
+class PPO_sym(PPO):
     actor_critic: ActorCriticLatent
     def __init__(self, 
                  actor_critic, 
@@ -101,7 +101,8 @@ class PPO_priv(PPO):
                     for i in range(int((num_obvs - self.no_mirror) / num_acts)):
                         self.mirror_obs[:, self.no_mirror + i*num_acts:self.no_mirror + (i+1)*num_acts, self.no_mirror + i*num_acts:self.no_mirror + (i+1)*num_acts] = self.mirror_act
                     self.mirror_init = False
-                mirror_loss = torch.mean(torch.square(self.actor_critic.actor(obs_batch) - (self.mirror_act @ self.actor_critic.actor((self.mirror_obs @ obs_batch.unsqueeze(2)).squeeze()).unsqueeze(2)).squeeze())) 
+                mirror_loss = torch.mean(torch.square(self.actor_critic.actor(obs_batch) \
+                                                      - (self.mirror_act @ self.actor_critic.actor((self.mirror_obs @ obs_batch.unsqueeze(2)).squeeze()).unsqueeze(2)).squeeze())) 
             
                 # Surrogate loss
                 ratio = torch.exp(actions_log_prob_batch - torch.squeeze(old_actions_log_prob_batch))

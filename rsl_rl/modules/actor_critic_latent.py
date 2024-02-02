@@ -10,7 +10,7 @@ class MLPEncode(nn.Module):
                  output_size, 
                  output_activation_fn = None, 
                  small_init= False, 
-                 priv_dim = 17, 
+                 priv_dim = 261, 
                  geom_dim = 0,
                  n_futures = 0):
         super(MLPEncode, self).__init__()
@@ -22,44 +22,50 @@ class MLPEncode(nn.Module):
         
         ## Encoder Architecture
         prop_latent_dim = 8
-        geom_latent_dim = 1
+        if self.geom_dim >0:
+            geom_latent_dim = 1
+        else:
+            geom_latent_dim = 0
         self.n_futures = n_futures
         self.prop_latent_dim = prop_latent_dim
         self.geom_latent_dim = geom_latent_dim
+        print("priv_dim",priv_dim)
+        print(self.activation_fn)
         self.prop_encoder =  nn.Sequential(*[
-                                    nn.Linear(priv_dim, 256), self.activation_fn(),
-                                    nn.Linear(256, 128), self.activation_fn(),
-                                    nn.Linear(128, prop_latent_dim), self.activation_fn(),
+                                    nn.Linear(priv_dim, 256), self.activation_fn,
+                                    nn.Linear(256, 128), self.activation_fn,
+                                    nn.Linear(128, prop_latent_dim), self.activation_fn,
                                     ]) 
         if self.geom_dim > 0:
             self.geom_encoder =  nn.Sequential(*[
-                                        nn.Linear(geom_dim, 64), self.activation_fn(),
-                                        nn.Linear(64, 16), self.activation_fn(),
-                                        nn.Linear(16, geom_latent_dim), self.activation_fn(),
+                                        nn.Linear(geom_dim, 64), self.activation_fn,
+                                        nn.Linear(64, 16), self.activation_fn,
+                                        nn.Linear(16, geom_latent_dim), self.activation_fn,
                                         ]) 
         else:
-            raise IOError("Not implemented geom_dim")
+            self.geom_encoder = None
         scale_encoder = [np.sqrt(2), np.sqrt(2), np.sqrt(2)]
 
         # creating the action encoder
-        modules = [nn.Linear(self.base_obs_dim + prop_latent_dim + (self.n_futures + 1)*geom_latent_dim, shape[0]), self.activation_fn()]
+        modules = [nn.Linear(self.base_obs_dim + prop_latent_dim + (self.n_futures + 1)*geom_latent_dim, shape[0]), self.activation_fn]
         scale = [np.sqrt(2)]
 
         for idx in range(len(shape)-1):
             modules.append(nn.Linear(shape[idx], shape[idx+1]))
-            modules.append(self.activation_fn())
+            modules.append(self.activation_fn)
             scale.append(np.sqrt(2))
 
         modules.append(nn.Linear(shape[-1], output_size))
         action_output_layer = modules[-1]
         if self.output_activation_fn is not None:
-            modules.append(self.output_activation_fn())
+            modules.append(self.output_activation_fn)
         self.action_mlp = nn.Sequential(*modules)
         scale.append(np.sqrt(2))
 
         self.init_weights(self.action_mlp, scale)
         self.init_weights(self.prop_encoder, scale_encoder)
-        self.init_weights(self.geom_encoder, scale_encoder)
+        if self.geom_dim >0:
+            self.init_weights(self.geom_encoder, scale_encoder)
         if small_init: action_output_layer.weight.data *= 1e-6
 
         self.input_shape = [base_obdim]
@@ -79,23 +85,34 @@ class MLPEncode(nn.Module):
         #     # Hacky way to detect where you are (dagger or not)
         #     # TODO: improve on this!
         #     x = x[:,x.shape[1]//2:]
-        prop_latent = self.prop_encoder(x[:,self.base_obs_dim:-self.geom_dim*(self.n_futures+1) -1])
+        if self.geom_dim>0:
+            prop_latent = self.prop_encoder(x[:,self.base_obs_dim:-self.geom_dim*(self.n_futures+1) -1])
+        else:
+            prop_latent = self.prop_encoder(x[:,self.base_obs_dim:])
+
         geom_latents = []
         for i in reversed(range(self.n_futures+1)):
             start = -(i+1)*self.geom_dim -1
             end = -i*self.geom_dim -1
             if (end == 0): 
                 end = None
-            geom_latent = self.geom_encoder(x[:,start:end])
-            geom_latents.append(geom_latent)
-        geom_latents = torch.hstack(geom_latents)
-        return self.action_mlp(torch.cat([x[:,:self.base_obs_dim], prop_latent, geom_latents], 1))
+            if self.geom_dim>0:
+                geom_latent = self.geom_encoder(x[:,start:end])
+                geom_latents.append(geom_latent)
+        if self.geom_dim>0:
+            geom_latents = torch.hstack(geom_latents)
+            input = torch.cat([x[:,:self.base_obs_dim], prop_latent, geom_latents], 1)
+        else :
+            input = torch.cat([x[:,:self.base_obs_dim], prop_latent], 1)
+        return self.action_mlp(input)
+    def only_obs(self,x):
+        return self.action_mlp(x)
 
 class MLPEncode_wrap(nn.Module):
     def __init__(self, shape, actionvation_fn, input_size, output_size, output_activation_fn = None,
-                 small_init= False, base_obdim = 45, geom_dim = 0, n_futures = 3):
+                 small_init= False, priv_dim = 261, geom_dim = 0, n_futures = 0):
         super(MLPEncode_wrap, self).__init__()
-        self.architecture = MLPEncode(shape, actionvation_fn, input_size, output_size, output_activation_fn, small_init, base_obdim, geom_dim, n_futures)
+        self.architecture = MLPEncode(shape, actionvation_fn, input_size, output_size, output_activation_fn, small_init, priv_dim, geom_dim, n_futures)
         self.input_shape = self.architecture.input_shape
         self.output_shape = self.architecture.output_shape
 

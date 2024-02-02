@@ -36,7 +36,8 @@ from rsl_rl.utils import split_and_pad_trajectories
 class RolloutStorageRMA:
     class Transition:
         def __init__(self):
-            self.total_obs = None
+            self.observations = None
+            self.privileged_observations = None
             self.actions = None
             self.rewards = None
             self.dones = None
@@ -49,15 +50,16 @@ class RolloutStorageRMA:
         def clear(self):
             self.__init__()
 
-    def __init__(self, num_envs, num_transitions_per_env, num_obs, num_privileged_obs, actions_shape, device='cpu'):
+    def __init__(self, num_envs, num_transitions_per_env, obs_shape, privileged_obs_shape, actions_shape, device='cpu'):
 
         self.device = device
 
-        self.obs_shape = num_obs
+        self.obs_shape = obs_shape
         self.actions_shape = actions_shape
 
         # Core
-        self.total_obs = torch.zeros(num_transitions_per_env, num_envs, num_obs+num_privileged_obs, device=self.device)
+        self.observations = torch.zeros(num_transitions_per_env, num_envs, *obs_shape, device=self.device)
+        self.privileged_observations = torch.zeros(num_transitions_per_env, num_envs, *privileged_obs_shape, device=self.device)
         self.rewards = torch.zeros(num_transitions_per_env, num_envs, 1, device=self.device)
         self.actions = torch.zeros(num_transitions_per_env, num_envs, *actions_shape, device=self.device)
         self.dones = torch.zeros(num_transitions_per_env, num_envs, 1, device=self.device).byte()
@@ -82,7 +84,8 @@ class RolloutStorageRMA:
     def add_transitions(self, transition: Transition):
         if self.step >= self.num_transitions_per_env:
             raise AssertionError("Rollout buffer overflow")
-        self.total_obs[self.step].copy_(transition.total_obs)
+        self.observations[self.step].copy_(transition.observations)
+        self.privileged_observations[self.step].copy_(transition.privileged_observations)
         self.actions[self.step].copy_(transition.actions)
         self.rewards[self.step].copy_(transition.rewards.view(-1, 1))
         self.dones[self.step].copy_(transition.dones.view(-1, 1))
@@ -142,7 +145,8 @@ class RolloutStorageRMA:
         mini_batch_size = batch_size // num_mini_batches
         indices = torch.randperm(num_mini_batches*mini_batch_size, requires_grad=False, device=self.device)
 
-        total_obs = self.total_obs.flatten(0, 1)
+        obs = self.observations.flatten(0,1)
+        privileged_obs = self.privileged_observations.flatten(0, 1)
         actions = self.actions.flatten(0, 1)
         values = self.values.flatten(0, 1)
         returns = self.returns.flatten(0, 1)
@@ -158,7 +162,8 @@ class RolloutStorageRMA:
                 end = (i+1)*mini_batch_size
                 batch_idx = indices[start:end]
 
-                total_obs_batch = total_obs[batch_idx]
+                obs_batch = obs[batch_idx]
+                privileged_obs_batch = privileged_obs[batch_idx]
                 actions_batch = actions[batch_idx]
                 target_values_batch = values[batch_idx]
                 returns_batch = returns[batch_idx]
@@ -166,5 +171,5 @@ class RolloutStorageRMA:
                 advantages_batch = advantages[batch_idx]
                 old_mu_batch = old_mu[batch_idx]
                 old_sigma_batch = old_sigma[batch_idx]
-                yield total_obs_batch, actions_batch, target_values_batch, advantages_batch, returns_batch, \
+                yield obs_batch, privileged_obs_batch, actions_batch, target_values_batch, advantages_batch, returns_batch, \
                        old_actions_log_prob_batch, old_mu_batch, old_sigma_batch, (None, None), None

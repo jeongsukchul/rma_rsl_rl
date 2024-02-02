@@ -39,8 +39,9 @@ import torch
 from rsl_rl.algorithms import PPO, PPO_priv
 from rsl_rl.modules import ActorCriticLatent
 from rsl_rl.env import VecEnv
+from rsl_rl.runners import OnPolicyRunner
 
-class OnPolicyRunnerRMA:
+class OnPolicyRunnerRMA(OnPolicyRunner):
 
     def __init__(self,
                  env: VecEnv,
@@ -72,7 +73,7 @@ class OnPolicyRunnerRMA:
 
         
         # init storage and model
-        self.alg.init_storage(self.env.num_envs, self.num_steps_per_env, [self.env.num_obs+self.env.num_privileged_obs], [self.env.num_actions])
+        self.alg.init_storage(self.env.num_envs, self.num_steps_per_env, [self.env.num_obs],[self.env.num_privileged_obs], [self.env.num_actions])
 
         # Log
         self.log_dir = log_dir
@@ -91,8 +92,7 @@ class OnPolicyRunnerRMA:
             self.env.episode_length_buf = torch.randint_like(self.env.episode_length_buf, high=int(self.env.max_episode_length))
         obs = self.env.get_observations()
         privileged_obs = self.env.get_privileged_observations()
-        total_obs = torch.cat((obs,privileged_obs),dim=-1)
-        total_obs = total_obs.to(self.device)
+        obs, privileged_obs = obs.to(self.device), privileged_obs.to(self.device)
         self.alg.actor_critic.train() # switch to train mode (for dropout for example)
 
         ep_infos = []
@@ -107,7 +107,7 @@ class OnPolicyRunnerRMA:
             # Rollout
             with torch.inference_mode():
                 for i in range(self.num_steps_per_env):
-                    actions = self.alg.act(total_obs)
+                    actions = self.alg.act(obs, privileged_obs)
                     obs, privileged_obs, rewards, dones, infos = self.env.step(actions)
                     total_obs = torch.cat((obs,privileged_obs),dim=-1)
                     total_obs, rewards, dones = total_obs.to(self.device), rewards.to(self.device), dones.to(self.device)

@@ -117,7 +117,7 @@ class ActorCritic(nn.Module):
         return self.distribution.entropy().sum(dim=-1)
 
     def update_distribution(self, observations):
-        mean = self.actor.architecture(observations)
+        mean = self.actor(observations)
         self.distribution = Normal(mean, mean*0. + self.std)
 
     def act(self, observations, **kwargs):
@@ -128,11 +128,11 @@ class ActorCritic(nn.Module):
         return self.distribution.log_prob(actions).sum(dim=-1)
 
     def act_inference(self, observations):
-        actions_mean = self.actor.architecture(observations)
+        actions_mean = self.actor(observations)
         return actions_mean
 
     def evaluate(self, critic_observations, **kwargs):
-        value = self.critic.architecture(critic_observations)
+        value = self.critic(critic_observations)
         return value
 
 def get_activation(act_name):
