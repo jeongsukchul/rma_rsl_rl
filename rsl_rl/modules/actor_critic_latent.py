@@ -90,20 +90,20 @@ class MLPEncode(nn.Module):
         else:
             prop_latent = self.prop_encoder(x[:,self.base_obs_dim:])
 
-        geom_latents = []
-        for i in reversed(range(self.n_futures+1)):
-            start = -(i+1)*self.geom_dim -1
-            end = -i*self.geom_dim -1
-            if (end == 0): 
-                end = None
-            if self.geom_dim>0:
-                geom_latent = self.geom_encoder(x[:,start:end])
-                geom_latents.append(geom_latent)
-        if self.geom_dim>0:
-            geom_latents = torch.hstack(geom_latents)
-            input = torch.cat([x[:,:self.base_obs_dim], prop_latent, geom_latents], 1)
-        else :
-            input = torch.cat([x[:,:self.base_obs_dim], prop_latent], 1)
+        # geom_latents = []
+        # if self.geom_dim>0:
+        #     for i in reversed(range(self.n_futures+1)):
+        #         start = -(i+1)*self.geom_dim -1
+        #         end = -i*self.geom_dim -1
+        #         if (end == 0): 
+        #             end = None
+                
+        #             geom_latent = self.geom_encoder(x[:,start:end])
+        #             geom_latents.append(geom_latent)
+        #     geom_latents = torch.hstack(geom_latents)
+        #     input = torch.cat([x[:,:self.base_obs_dim], prop_latent, geom_latents], 1)
+
+        input = torch.cat([x[:,:self.base_obs_dim], prop_latent], 1)
         return self.action_mlp(input)
     def only_obs(self,x):
         return self.action_mlp(x)
