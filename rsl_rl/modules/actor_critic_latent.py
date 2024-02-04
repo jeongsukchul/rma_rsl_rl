@@ -126,6 +126,7 @@ class ActorCriticLatent(nn.Module):
                         actor_hidden_dims=[256, 256, 256],
                         critic_hidden_dims=[256, 256, 256],
                         activation='elu',
+                        output_activatation='tanh',
                         init_noise_std=1.0, 
                         **kwargs):
         if kwargs:
@@ -140,7 +141,8 @@ class ActorCriticLatent(nn.Module):
                                      num_actions,
                                      priv_dim = privDim,
                                      geom_dim = geomDim,
-                                     n_futures = n_futures)
+                                     n_futures = n_futures,
+                                     output_activation_fn=output_activatation)
         
 
 
@@ -150,7 +152,8 @@ class ActorCriticLatent(nn.Module):
                                      1,
                                      priv_dim = privDim,
                                      geom_dim = geomDim,
-                                     n_futures = n_futures)
+                                     n_futures = n_futures,
+                                     output_activation_fn=output_activatation)
         # Value function
 
         print(f"Actor MLP: {self.actor.architecture}")

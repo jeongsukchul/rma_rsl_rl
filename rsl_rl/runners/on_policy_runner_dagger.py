@@ -40,17 +40,20 @@ from rsl_rl.algorithms import DaggerTrainer, DaggerExpert, DaggerAgent
 from rsl_rl.modules import StateHistoryEncoder, MLP
 from rsl_rl.env import VecEnv
 from rsl_rl.runners import OnPolicyRunner
+from rsl_rl.modules import MLP
 
-class OnPolicyRunnerDagger:
+
+class OnPolicyRunnerDagger(OnPolicyRunner):
 
     def __init__(self,
+                 expert_policy,
                  env: VecEnv,
                  train_cfg,
                  log_dir=None,
                  device='cpu'):
         self.cfg=train_cfg["dagger"]
         self.alg_cfg = train_cfg["algorithm"]
-        self.policy_cfg = train_cfg["policy"]
+        self.mlp_cfg = train_cfg["MLP"]
         self.device = device
         self.env = env
         if self.env.num_privileged_obs is not None:
@@ -59,21 +62,39 @@ class OnPolicyRunnerDagger:
             self.num_privs = 0
         self.num_geoms=0
         self.n_futures=0
-        actor_critic_class = eval(self.cfg["policy_class_name"]) # ActorCriticLatent
-        actor_critic_latent: ActorCriticLatent = actor_critic_class( self.env.num_obs,
-                                                        self.num_privs,
-                                                        self.num_geoms,
-                                                        self.n_futures,
-                                                        self.env.num_actions,
-                                                        **self.policy_cfg).to(self.device)
-        alg_class = eval(self.cfg["algorithm_class_name"]) # PPO_priv
-        self.alg: PPO_priv = alg_class(actor_critic_latent, device=self.device, **self.alg_cfg) # self.alg_cfg is dict?
+        self.t_steps = self.cfg["history_len"]
         self.num_steps_per_env = self.cfg["num_steps_per_env"]
         self.save_interval = self.cfg["save_interval"]
 
+        expert_policy_class = eval(self.cfg["expert_policy_name"]) # DAggerAgent
+        self.history_shape = (self.t_steps)*(self.env.num_obs+self.env.num_actions)
+        self.expert: DaggerExpert = expert_policy_class(expert_policy,
+                                                        self.env.num_envs,
+                                                        self.num_geoms,
+                                                        self.n_futures,).to(self.device)
+        
+        self.student_mlp = MLP(self.policy_config, 
+                               self.env.num_obs+self.env.num_actions+self.num_privs,
+                               self.env.num_actions,
+                               **self.mlp_cfg).to(self.device).to(self.device)
+        self.adaptation_encoder = StateHistoryEncoder(self.mlp_cfg["output_activation"], self.env.num_obs+self.num_actions, self.t_steps,
+                                                     self.num_privs + (self.n_futures+1)*self.num_geoms).to(self.device)
+        
+        actor_class = eval(self.cfg["student_policy_class"])
+        self.actor:DaggerAgent = actor_class(self.expert,
+                                             self.adaptation_encoder, self.student_mlp, self.t_steps, self.env.num_obs, self.device, n_futures=self.n_futures)
+        self.dagger:DaggerTrainer = DaggerTrainer(
+            actor=self.actor,
+            num_envs=self.env.num_envs,
+            num_transitions_per_env=self.num_steps_per_env,
+            input_shape = self.input_shape,
+            latent_shape= self.num_privs + (self.n_futures+1)*self.num_geoms,
+            device=self.device,
+            *self.alg_cfg
+        )
         
         # init storage and model
-        self.alg.init_storage(self.env.num_envs, self.num_steps_per_env, [self.env.num_obs+self.env.num_privileged_obs], [self.env.num_actions])
+        self.dagger.init_storage(self.env.num_envs, self.num_steps_per_env, [self.input_shape], [self.env.num_actions])
 
         # Log
         self.log_dir = log_dir
@@ -90,12 +111,11 @@ class OnPolicyRunnerDagger:
             self.writer = SummaryWriter(log_dir=self.log_dir, flush_secs=10)
         if init_at_random_ep_len:
             self.env.episode_length_buf = torch.randint_like(self.env.episode_length_buf, high=int(self.env.max_episode_length))
+        
         obs = self.env.get_observations()
         privileged_obs = self.env.get_privileged_observations()
-        total_obs = torch.cat((obs,privileged_obs),dim=-1)
-        total_obs = total_obs.to(self.device)
+        history = torch.zeros((self.env.num_envs, self.history_shape), dtype=torch.float,device=self.device)
         self.alg.actor_critic.train() # switch to train mode (for dropout for example)
-
         ep_infos = []
         rewbuffer = deque(maxlen=100)
         lenbuffer = deque(maxlen=100)
@@ -108,11 +128,13 @@ class OnPolicyRunnerDagger:
             # Rollout
             with torch.inference_mode():
                 for i in range(self.num_steps_per_env):
-                    actions = self.alg.act(total_obs)
+                    actions = self.dagger.observe(history,obs)
                     obs, privileged_obs, rewards, dones, infos = self.env.step(actions)
-                    total_obs = torch.cat((obs,privileged_obs),dim=-1)
-                    total_obs, rewards, dones = total_obs.to(self.device), rewards.to(self.device), dones.to(self.device)
-                    self.alg.process_env_step(rewards, dones, infos)
+                    obs, actions, privileged_obs = obs.to(self.device), actions.to(self.device), privileged_obs.to(self.device) 
+                    new_history = torch.cat((obs,actions),dim=1)
+                    history = history[:,self.env.num_obs+self.env.num_actions:]
+                    history[:] = torch.cat((history, new_history),dim=1)
+                    self.dagger.step(privileged_obs,history)
                     
                     if self.log_dir is not None:
                         # Book keeping
@@ -131,9 +153,7 @@ class OnPolicyRunnerDagger:
 
                 # Learning step
                 start = stop
-                self.alg.compute_returns(total_obs)
-            
-            mean_value_loss, mean_surrogate_loss, mean_mirror_loss = self.alg.update()
+            mean_prop_loss, mean_geom_loss = self.dagger.update()
             stop = time.time()
             learn_time = stop - start
             if self.log_dir is not None:
@@ -167,9 +187,9 @@ class OnPolicyRunnerDagger:
         mean_std = self.alg.actor_critic.std.mean()
         fps = int(self.num_steps_per_env * self.env.num_envs / (locs['collection_time'] + locs['learn_time']))
 
-        self.writer.add_scalar('Loss/value_function', locs['mean_value_loss'], locs['it'])
-        self.writer.add_scalar('Loss/surrogate', locs['mean_surrogate_loss'], locs['it'])
-        self.writer.add_scalar('Loss/mirror', locs['mean_mirror_loss'], locs['it'])
+        self.writer.add_scalar('Loss/prop_latent', locs['mean_prop_loss'], locs['it'])
+        self.writer.add_scalar('Loss/geom_latent', locs['mean_geom_loss'], locs['it'])
+        # self.writer.add_scalar('Loss/mirror', locs['mean_mirror_loss'], locs['it'])
         self.writer.add_scalar('Loss/learning_rate', self.alg.learning_rate, locs['it'])
         self.writer.add_scalar('Policy/mean_noise_std', mean_std.item(), locs['it'])
         self.writer.add_scalar('Perf/total_fps', fps, locs['it'])
@@ -188,9 +208,9 @@ class OnPolicyRunnerDagger:
                           f"""{str.center(width, ' ')}\n\n"""
                           f"""{'Computation:':>{pad}} {fps:.0f} steps/s (collection: {locs[
                             'collection_time']:.3f}s, learning {locs['learn_time']:.3f}s)\n"""
-                          f"""{'Value function loss:':>{pad}} {locs['mean_value_loss']:.4f}\n"""
-                          f"""{'Surrogate loss:':>{pad}} {locs['mean_surrogate_loss']:.4f}\n"""
-                          f"""{'Mirror loss:':>{pad}} {locs['mean_mirror_loss']:.4f}\n"""
+                          f"""{'Prop latent loss:':>{pad}} {locs['mean_prop_loss']:.4f}\n"""
+                          f"""{'Geom latent loss:':>{pad}} {locs['mean_geom_loss']:.4f}\n"""
+                        #   f"""{'Mirror loss:':>{pad}} {locs['mean_mirror_loss']:.4f}\n"""
                           f"""{'Mean action noise std:':>{pad}} {mean_std.item():.2f}\n"""
                           f"""{'Mean reward:':>{pad}} {statistics.mean(locs['rewbuffer']):.2f}\n"""
                           f"""{'Mean episode length:':>{pad}} {statistics.mean(locs['lenbuffer']):.2f}\n""")
