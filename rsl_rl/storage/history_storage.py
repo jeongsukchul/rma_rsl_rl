@@ -1,11 +1,11 @@
 import torch
 
-class ObsStorage:
-    def __init__(self, num_envs, num_transitions_per_env, obs_shape, latent_shape, device):
+class HistoryStorage:
+    def __init__(self, num_envs, num_transitions_per_env, history_shape, latent_shape, device):
         self.device = device
 
         # Core
-        self.observations = torch.zeros(num_transitions_per_env, num_envs, *obs_shape).to(self.device)
+        self.history = torch.zeros(num_transitions_per_env, num_envs, *history_shape).to(self.device)
         self.expert_latents = torch.zeros(num_transitions_per_env, num_envs, *latent_shape).to(self.device)
         self.device = device
 
@@ -13,10 +13,10 @@ class ObsStorage:
         self.num_transitions_per_env = num_transitions_per_env
         self.step = 0
 
-    def add_obs(self, obs, expert_action):
+    def add_inputs(self, history, expert_action):
         if self.step >= self.num_transitions_per_env:
-            raise AssertionError("Rollout buffer overflow")
-        self.observations[self.step].copy_(torch.from_numpy(obs).to(self.device))
+            raise AssertionError("History buffer overflow")
+        self.history[self.step].copy_(torch.from_numpy(history).to(self.device))
         self.expert_latents[self.step].copy_(expert_action)
         self.step += 1
 
@@ -28,7 +28,7 @@ class ObsStorage:
         mini_batch_size = batch_size // num_mini_batches
         indices = torch.randperm(num_mini_batches*mini_batch_size, requires_grad=False, device=self.device)
 
-        observations = self.observations.flatten(0, 1)
+        history= self.inputs.flatten(0, 1)
         expert_latents = self.expert_latents.flatten(0,1)
         for epoch in range(num_epochs):
             for batch_id in range(num_mini_batches):
@@ -37,6 +37,6 @@ class ObsStorage:
                 end = (batch_id+1)*mini_batch_size
                 batch_idx = indices[start:end]
 
-                obs_batch = observations[batch_idx]
+                history_batch = history[batch_idx]
                 expert_latents_batch = expert_latents[batch_idx]
-                yield obs_batch, expert_latents_batch
+                yield history_batch, expert_latents_batch

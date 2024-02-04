@@ -2,7 +2,6 @@ import torch.nn as nn
 import numpy as np
 import torch
 import numpy as np
-from rsl_rl.storage import ObsStorage 
 
 
 # latent_vetor + base_dim * T  --> ACTION
@@ -56,29 +55,36 @@ class StateHistoryEncoder(nn.Module):
 
 
 
-    def forward(self, obs):
-        bs = obs.shape[0]
+    def forward(self, inputs):  #inputs: (num_envs, T*num_obs)
+        bs = inputs.shape[0]
         T = self.tsteps
-        projection = self.encoder(obs.reshape([bs * T, -1]))
-        output = self.conv_layers(projection.reshape([bs, -1, T]))
+        projection = self.encoder(inputs.reshape([bs * T, -1]))       #-1 : num_obs
+        output = self.conv_layers(projection.reshape([bs, -1, T]))    #-1 : num_obs
         output = self.linear_output(output)
         return output
 
 class MLP(nn.Module):
-    def __init__(self, shape, actionvation_fn, input_size, output_size, output_activation_fn = None, small_init= False, base_obdim = None):
+    def __init__(self, 
+                 input_size, 
+                 output_size,
+                mlp_shape=[256,256,256,], 
+                actionvation_fn='elu', 
+                output_activation_fn = None, 
+                small_init= False, 
+                ):
         super(MLP, self).__init__()
         self.activation_fn = actionvation_fn
         self.output_activation_fn = output_activation_fn
 
-        modules = [nn.Linear(input_size, shape[0]), self.activation_fn()]
+        modules = [nn.Linear(input_size, mlp_shape[0]), self.activation_fn()]
         scale = [np.sqrt(2)]
 
-        for idx in range(len(shape)-1):
-            modules.append(nn.Linear(shape[idx], shape[idx+1]))
+        for idx in range(len(mlp_shape)-1):
+            modules.append(nn.Linear(mlp_shape[idx], mlp_shape[idx+1]))
             modules.append(self.activation_fn())
             scale.append(np.sqrt(2))
 
-        modules.append(nn.Linear(shape[-1], output_size))
+        modules.append(nn.Linear(mlp_shape[-1], output_size))
         
         action_output_layer = modules[-1]
         if self.output_activation_fn is not None:
