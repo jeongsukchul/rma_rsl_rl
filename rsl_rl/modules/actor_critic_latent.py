@@ -29,8 +29,6 @@ class MLPEncode(nn.Module):
         self.n_futures = n_futures
         self.prop_latent_dim = prop_latent_dim
         self.geom_latent_dim = geom_latent_dim
-        print("priv_dim",priv_dim)
-        print(self.activation_fn)
         self.prop_encoder =  nn.Sequential(*[
                                     nn.Linear(priv_dim, 256), self.activation_fn,
                                     nn.Linear(256, 128), self.activation_fn,
@@ -59,14 +57,16 @@ class MLPEncode(nn.Module):
         action_output_layer = modules[-1]
         if self.output_activation_fn is not None:
             modules.append(self.output_activation_fn)
+
         self.action_mlp = nn.Sequential(*modules)
         scale.append(np.sqrt(2))
 
-        self.init_weights(self.action_mlp, scale)
-        self.init_weights(self.prop_encoder, scale_encoder)
-        if self.geom_dim >0:
-            self.init_weights(self.geom_encoder, scale_encoder)
-        if small_init: action_output_layer.weight.data *= 1e-6
+        # use elu and do not init weights
+        # self.init_weights(self.action_mlp, scale)
+        # self.init_weights(self.prop_encoder, scale_encoder)
+        # if self.geom_dim >0:
+        #     self.init_weights(self.geom_encoder, scale_encoder)
+        # if small_init: action_output_layer.weight.data *= 1e-6
 
         self.input_shape = [base_obdim]
         self.output_shape = [output_size]
@@ -126,7 +126,7 @@ class ActorCriticLatent(nn.Module):
                         actor_hidden_dims=[256, 256, 256],
                         critic_hidden_dims=[256, 256, 256],
                         activation='elu',
-                        output_activatation='tanh',
+                        output_activation='tanh',
                         init_noise_std=1.0, 
                         **kwargs):
         if kwargs:
@@ -134,6 +134,7 @@ class ActorCriticLatent(nn.Module):
         super(ActorCriticLatent, self).__init__()
 
         activation = get_activation(activation)
+        output_activation = get_activation(output_activation)
 
         self.actor = MLPEncode_wrap(actor_hidden_dims,
                                      activation,
@@ -142,7 +143,7 @@ class ActorCriticLatent(nn.Module):
                                      priv_dim = privDim,
                                      geom_dim = geomDim,
                                      n_futures = n_futures,
-                                     output_activation_fn=output_activatation)
+                                     output_activation_fn=output_activation)
         
 
 
@@ -153,7 +154,7 @@ class ActorCriticLatent(nn.Module):
                                      priv_dim = privDim,
                                      geom_dim = geomDim,
                                      n_futures = n_futures,
-                                     output_activation_fn=output_activatation)
+                                     output_activation_fn=output_activation)
         # Value function
 
         print(f"Actor MLP: {self.actor.architecture}")
